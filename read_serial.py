@@ -5,7 +5,7 @@ import serial
 import time
 from timeit import default_timer as timer
 from datetime import timedelta
-
+import mido
 
 # this port address is for the serial tx/rx pins on the GPIO header
 SERIAL_PORT = '/dev/cu.usbmodem141131'
@@ -22,32 +22,51 @@ from google.auth.transport.requests import Request
 SCOPES = ['https://www.googleapis.com/auth/drive']
 READY_FOR_EXECUTION = False
 
-def execute_deletion_of_all_files(service, files):
+
+
+def execute_deletion_of_all_files(service, files, midi_outport):
     print("Beginning deletion of {} files ".format(len(files)))
+    period_between_deletions = 4
     for item in files:
         modified_time = item.get('modifiedTime', 'n/a')
 
-        time.sleep(5)
+        time.sleep(period_between_deletions)
+        if period_between_deletions > 2:
+            period_between_deletions -= .2
+        elif period_between_deletions < 2 and period_between_deletions > 1:
+            #print("here")
+            period_between_deletions -= .1
+        elif period_between_deletions < 1 and period_between_deletions > .18:
+            #print("here")
+            period_between_deletions -= .05
         file_id = item['id']
         # This is where the magic happens
         # if READY_FOR_EXECUTION:
         #     service.files().delete(fileId=file_id).execute()
+        midi_outport.send(mido.Message('note_on', note=44, time=1 ,channel=1))
 
-        print(u'DELETED FILE NAME {0} : last modified {1}'.format(item['name'], modified_time))
-
+        print(u'DELETED FILE NAME {0} : last modified {1} : created at {2}'.format(item['name'], modified_time,item.get('createdTime','')))
+    midi_outport.send(mido.Message('note_on', note=48, time=1, channel=1))
     pass
 
 def main():
+    print("Initiating Pulling the Plug control Script")
+    confirmed_stable_sensor_data = False
     detectedPossiblePull = False
     ready_for_pull = False
+    midi_outport = mido.open_output('To Live Live')
 
     service = authenticate()
+    print('Successfully Authenticated user to Google Drive')
+    print("Connected to Drive API to collect files")
     all_files_found_for_deletion = list_files(service)
     start = timer()
     detectionTimerStart = timer()
     detectionTimerEnd = timer()
 
-    print('authenticated looking for plug pull')
+
+    if READY_FOR_EXECUTION:
+        print("WARNING, EXECUTION FLAG IS ENABLED PULLING THE PLUG WILL PERMANENTLY DELETE YOUR ACCESS TO YOUR DATA")
     print("Beginning Setup, will not delete before 10 seconds of sensor stability ")
     ser = serial.Serial(SERIAL_PORT, SERIAL_RATE)
 
@@ -56,34 +75,45 @@ def main():
         # sent using Serial.println() on the Arduino
         reading = int(ser.readline().decode('utf-8'))
         # reading is a string...do whatever you want from here
-        print("Recieved from arduino over serial : ", reading)
-        if reading == 2 and ready_for_pull:
-            if detectedPossiblePull is False:
-                detectionTimerStart = timer()
-                detectedPossiblePull = True
+
+        if not confirmed_stable_sensor_data:
+            if reading == 2:
+                print("The plug is reading that it is not inserted, please reconfigure the plug before proceeding")
             else:
-                detectionTimerEnd = timer()
-                plug_pulled_tdelta = int(timedelta(seconds=detectionTimerEnd - detectionTimerStart).seconds)
-                print("{} seconds passed.  Checking if really a plug pull".format(plug_pulled_tdelta))
+                confirmed_stable_sensor_data = True
+                #print("Beginning Detection for plug pull")
+                detectionTimerStart = timer()
 
-                if plug_pulled_tdelta > 2:
 
-                    try:
-                        print("Plug disconnected, fetching all files")
-                        execute_deletion_of_all_files(service, all_files_found_for_deletion)
-                    except Exception as error:
-                        print('An error occurred: %s' % error)
-                    print('deleting ')
-                    exit()
-        else:
-            detectedPossiblePull = False
-            end = timer()
-            tdelta = int(timedelta(seconds=end - start).seconds)
+        if confirmed_stable_sensor_data:
+            # print("Recieved from arduino over serial : ", reading)
+            if reading == 2 and ready_for_pull:
+                if detectedPossiblePull is False:
+                    detectionTimerStart = timer()
+                    detectedPossiblePull = True
+                else:
+                    detectionTimerEnd = timer()
+                    plug_pulled_tdelta = int(timedelta(seconds=detectionTimerEnd - detectionTimerStart).seconds)
+                    print("{} seconds passed.  Checking if really a plug pull".format(plug_pulled_tdelta))
 
-            if tdelta > 10 and ready_for_pull is False:
-                ready_for_pull = True
+                    if plug_pulled_tdelta > 4:
 
-                print("{} seconds passed.  Ready for plug pull".format(tdelta))
+                        try:
+                            print("Plug disconnected, fetching all files")
+                            execute_deletion_of_all_files(service, all_files_found_for_deletion, midi_outport)
+                        except Exception as error:
+                            print('An error occurred: %s' % error)
+                        print('deleting ')
+                        exit()
+            else:
+                detectedPossiblePull = False
+                end = timer()
+                tdelta = int(timedelta(seconds=end - start).seconds)
+
+                if tdelta > 10 and ready_for_pull is False:
+                    ready_for_pull = True
+
+                    print("{} seconds passed.  Ready for plug pull".format(tdelta))
 
 
         time.sleep(.1)
@@ -103,7 +133,7 @@ def list_files(service):
         if not items:
             print('No files found.')
         else:
-            print('Files:')
+            #print('Files:')
             for item in items:
                 full_set_of_files.append(item)
             #     modified_time = item.get('modifiedTime', 'n/a')
@@ -113,7 +143,7 @@ def list_files(service):
             #     time.sleep(.5)
             #     print(u'{0} ({1}) : last modified {2}'.format(item['name'], item['id'], modified_time))
             #     count+=1
-        print('fetching using page token',page_token)
+        #print('fetching using page token',page_token)
 
         results = service.files().list(q=q,
                                        pageSize=40,
