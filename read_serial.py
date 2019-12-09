@@ -1,14 +1,15 @@
 from __future__ import print_function
 
 import serial
-
+from serial import Serial
+import serial.tools.list_ports
 import time
 from timeit import default_timer as timer
 from datetime import timedelta
 import mido
 
 # this port address is for the serial tx/rx pins on the GPIO header
-SERIAL_PORT = '/dev/cu.usbmodem141131'
+SERIAL_PORT = '/dev/cu.usbmodem143131'
 # be sure to set this to the same rate used on the Arduino
 SERIAL_RATE = 9600
 import pickle
@@ -41,19 +42,36 @@ def execute_deletion_of_all_files(service, files, midi_outport):
             period_between_deletions -= .05
         file_id = item['id']
         # This is where the magic happens
-        # if READY_FOR_EXECUTION:
-        #     service.files().delete(fileId=file_id).execute()
+        if READY_FOR_EXECUTION:
+            service.files().delete(fileId=file_id).execute()
         midi_outport.send(mido.Message('note_on', note=44, time=1 ,channel=1))
 
         print(u'DELETED FILE NAME {0} : last modified {1} : created at {2}'.format(item['name'], modified_time,item.get('createdTime','')))
     midi_outport.send(mido.Message('note_on', note=48, time=1, channel=1))
     pass
 
+
+def init_serial_connection():
+    global ser
+    port_name = '/dev/cu.usbmodem143111'
+    ports = serial.tools.list_ports.comports()
+    print(ports)
+    ports = serial.tools.list_ports.comports()
+    for port in ports:
+        if "/dev/cu.usbmodem" in port.device:
+            port_name = port.device
+            print("using {} for specified port".format(port_name))
+    ser = Serial(port_name, 9600)  # Establish the connection on a specific port
+    return ser
+
+
+print("waiting for messages")
+
 def main():
     print("Initiating Pulling the Plug control Script")
     confirmed_stable_sensor_data = False
-    detectedPossiblePull = False
-    ready_for_pull = False
+    detected_possible_pull = False
+    initial_wait_time_completed = False
     midi_outport = mido.open_output('To Live Live')
 
     service = authenticate()
@@ -61,41 +79,56 @@ def main():
     print("Connected to Drive API to collect files")
     all_files_found_for_deletion = list_files(service)
     start = timer()
-    detectionTimerStart = timer()
-    detectionTimerEnd = timer()
+    detection_timer_start = timer()
+    detection_timer_end = timer()
 
 
     if READY_FOR_EXECUTION:
         print("WARNING, EXECUTION FLAG IS ENABLED PULLING THE PLUG WILL PERMANENTLY DELETE YOUR ACCESS TO YOUR DATA")
+        execute_deletion_of_all_files(service, all_files_found_for_deletion, midi_outport)
     print("Beginning Setup, will not delete before 10 seconds of sensor stability ")
-    ser = serial.Serial(SERIAL_PORT, SERIAL_RATE)
+    ser = init_serial_connection()
 
     while True:
         # using ser.readline() assumes each line contains a single reading
         # sent using Serial.println() on the Arduino
         reading = int(ser.readline().decode('utf-8'))
+        # print("Reading from arduino is ", reading)
         # reading is a string...do whatever you want from here
 
+        # Don't Do Anything Until you have started with the signal that the plug is inserted
+        # 2 indicates that plug is out so we want to be recieving the value 1
         if not confirmed_stable_sensor_data:
             if reading == 2:
                 print("The plug is reading that it is not inserted, please reconfigure the plug before proceeding")
             else:
                 confirmed_stable_sensor_data = True
-                #print("Beginning Detection for plug pull")
-                detectionTimerStart = timer()
+                print("Beginning Detection for plug pull")
+                detection_timer_start = timer()
+        if not initial_wait_time_completed:
+            end = timer()
+            tdelta = int(timedelta(seconds=end - start).seconds)
 
+            if tdelta > 10 and initial_wait_time_completed is False:
+                initial_wait_time_completed = True
 
-        if confirmed_stable_sensor_data:
-            # print("Recieved from arduino over serial : ", reading)
-            if reading == 2 and ready_for_pull:
-                if detectedPossiblePull is False:
-                    detectionTimerStart = timer()
-                    detectedPossiblePull = True
+                print("{} seconds passed.  Ready for plug pull".format(tdelta))
+
+        if confirmed_stable_sensor_data and initial_wait_time_completed:
+            # If the Plug is out of the socket
+            if reading == 2:
+                # If this is the first time we have found the number 2 signal
+                if detected_possible_pull is False:
+                    # Start the timer for amount of time plug has been out and then look for enough time elapsed
+                    detection_timer_start = timer()
+                    detected_possible_pull = True
                 else:
-                    detectionTimerEnd = timer()
-                    plug_pulled_tdelta = int(timedelta(seconds=detectionTimerEnd - detectionTimerStart).seconds)
+                    # Reading is 1 and plug is out, check if enough time has passed
+                    detection_timer_end = timer()
+                    plug_pulled_tdelta = int(timedelta(seconds=detection_timer_end - detection_timer_start).seconds)
                     print("{} seconds passed.  Checking if really a plug pull".format(plug_pulled_tdelta))
 
+                    # Enough Time has Passed So Execute Deletion
                     if plug_pulled_tdelta > 4:
 
                         try:
@@ -106,14 +139,7 @@ def main():
                         print('deleting ')
                         exit()
             else:
-                detectedPossiblePull = False
-                end = timer()
-                tdelta = int(timedelta(seconds=end - start).seconds)
-
-                if tdelta > 10 and ready_for_pull is False:
-                    ready_for_pull = True
-
-                    print("{} seconds passed.  Ready for plug pull".format(tdelta))
+                detected_possible_pull = False
 
 
         time.sleep(.1)
