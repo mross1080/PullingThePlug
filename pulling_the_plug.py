@@ -105,7 +105,7 @@ def get_file_names_from_drive(service, permission_id, timescale):
     while page_token is not None:
         new_page_token = results.get('nextPageToken')
         #count = display_files_from_drive(count, results)
-        print('fetching using page token',page_token)
+        #print('fetching using page token',page_token)
 
         results = service.files().list(q=q,
                                        pageSize=40,

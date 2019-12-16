@@ -128,12 +128,14 @@ def main(args):
     permission_id = about_metadata['user']['permissionId']
     timescale = "18 months"
     all_files_found_for_deletion = get_file_names_from_drive(service,permission_id,timescale)
+
+    print("A Total of {} files have not been looked at in over 18 months".format(len(all_files_found_for_deletion)))
     if args.list_all:
         display_files_in_table(all_files_found_for_deletion)
     if args.single_file:
         print("\n\n\nRandomly Selecting A Single File For Deletion")
         time.sleep(4)
-        all_files_found_for_deletion = [all_files_found_for_deletion[randint(0, len(all_files_found_for_deletion))]]
+        all_files_found_for_deletion = [all_files_found_for_deletion[randint(0, len(all_files_found_for_deletion))-1]]
         file_to_delete = text2art("File To Delete Is ...",font='small')
         print(file_to_delete)
         # logging.info("Your Randomly Selected File For Deletion is ....")
@@ -144,12 +146,12 @@ def main(args):
     detection_timer_end = timer()
 
 
-    if READY_FOR_EXECUTION and args.enable_deletion:
+    if READY_FOR_EXECUTION:
         logging.info("\n\nWARNING, EXECUTION FLAG IS ENABLED PULLING THE PLUG WILL PERMANENTLY DELETE YOUR ACCESS TO YOUR DATA\n\n")
     else:
         logging.info("Ready for execution flag is not enabled, deletion will not occur")
 
-    logging.info("Beginning Setup, calibrating plug stability.  Please wait 10 seconds ...")
+    logging.info("Beginning Setup, calibrating plug stability.  Please wait 5 seconds ...")
     ser = init_serial_connection()
 
     while True:
@@ -172,7 +174,7 @@ def main(args):
             end = timer()
             tdelta = int(timedelta(seconds=end - start).seconds)
 
-            if tdelta > 10 and initial_wait_time_completed is False:
+            if tdelta > 5 and initial_wait_time_completed is False:
                 initial_wait_time_completed = True
 
                 #print("{} seconds passed.  Ready for plug pull".format(tdelta))
@@ -192,12 +194,15 @@ def main(args):
                     # Reading is 1 and plug is out, check if enough time has passed
                     detection_timer_end = timer()
                     plug_pulled_tdelta = int(timedelta(seconds=detection_timer_end - detection_timer_start).seconds)
+                    midi_outport.send(mido.Message('note_on', note=52, channel=2))
+
                     print("{} seconds passed since plug pulled".format(plug_pulled_tdelta))
 
                     # Enough Time has Passed So Execute Deletion
                     if plug_pulled_tdelta > 6:
 
                         try:
+                            midi_outport.send(mido.Message('note_off', note=52, time=1, channel=2))
 
                             execute_deletion_of_all_files(service, all_files_found_for_deletion, midi_outport)
                         except Exception as error:
